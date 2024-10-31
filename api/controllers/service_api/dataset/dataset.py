@@ -11,13 +11,19 @@ from core.provider_manager import ProviderManager
 from fields.dataset_fields import dataset_detail_fields
 from libs.login import current_user
 from models.dataset import Dataset, DatasetPermissionEnum
-from services.dataset_service import DatasetService
+# tuan edit
+from services.dataset_service import DatasetPermissionService, DatasetService
 
 
 def _validate_name(name):
     if not name or len(name) < 1 or len(name) > 40:
         raise ValueError("Name must be between 1 to 40 characters.")
     return name
+
+def _validate_description_length(description):
+    if len(description) > 400:
+        raise ValueError("Description cannot exceed 400 characters.")
+    return description
 
 
 class DatasetListApi(DatasetApiResource):
@@ -128,7 +134,6 @@ class DatasetListApi(DatasetApiResource):
 
         return marshal(dataset, dataset_detail_fields), 200
 
-
 class DatasetApi(DatasetApiResource):
     """Resource for dataset."""
 
@@ -157,6 +162,107 @@ class DatasetApi(DatasetApiResource):
                 raise NotFound("Dataset not found.")
         except services.errors.dataset.DatasetInUseError:
             raise DatasetInUseError()
+
+    # tuan edit
+    def patch(self, _, dataset_id):
+        dataset_id_str = str(dataset_id)
+        dataset = DatasetService.get_dataset(dataset_id_str)
+        if dataset is None:
+            raise NotFound("Dataset not found.")
+
+        parser = reqparse.RequestParser()
+        parser.add_argument(
+            "name",
+            nullable=False,
+            help="type is required. Name must be between 1 to 40 characters.",
+            type=_validate_name,
+        )
+        parser.add_argument("description", location="json", store_missing=False, type=_validate_description_length)
+        parser.add_argument(
+            "indexing_technique",
+            type=str,
+            location="json",
+            choices=Dataset.INDEXING_TECHNIQUE_LIST,
+            nullable=True,
+            help="Invalid indexing technique.",
+        )
+        parser.add_argument(
+            "permission",
+            type=str,
+            location="json",
+            choices=(DatasetPermissionEnum.ONLY_ME, DatasetPermissionEnum.ALL_TEAM, DatasetPermissionEnum.PARTIAL_TEAM),
+            help="Invalid permission.",
+        )
+        parser.add_argument("embedding_model", type=str, location="json", help="Invalid embedding model.")
+        parser.add_argument(
+            "embedding_model_provider", type=str, location="json", help="Invalid embedding model provider."
+        )
+        parser.add_argument("retrieval_model", type=dict, location="json", help="Invalid retrieval model.")
+        parser.add_argument("partial_member_list", type=list, location="json", help="Invalid parent user list.")
+
+        parser.add_argument(
+            "external_retrieval_model",
+            type=dict,
+            required=False,
+            nullable=True,
+            location="json",
+            help="Invalid external retrieval model.",
+        )
+
+        parser.add_argument(
+            "external_knowledge_id",
+            type=str,
+            required=False,
+            nullable=True,
+            location="json",
+            help="Invalid external knowledge id.",
+        )
+
+        parser.add_argument(
+            "external_knowledge_api_id",
+            type=str,
+            required=False,
+            nullable=True,
+            location="json",
+            help="Invalid external knowledge api id.",
+        )
+        args = parser.parse_args()
+        data = request.get_json()
+
+        # check embedding model setting
+        if data.get("indexing_technique") == "high_quality":
+            DatasetService.check_embedding_model_setting(
+                dataset.tenant_id, data.get("embedding_model_provider"), data.get("embedding_model")
+            )
+
+        # The role of the current user in the ta table must be admin, owner, editor, or dataset_operator
+        # DatasetPermissionService.check_permission(
+        #     current_user, dataset, data.get("permission"), data.get("partial_member_list")
+        # )
+
+        dataset = DatasetService.update_dataset(dataset_id_str, args, current_user)
+
+        if dataset is None:
+            raise NotFound("Dataset not found.")
+
+        result_data = marshal(dataset, dataset_detail_fields)
+        tenant_id = current_user.current_tenant_id
+
+        if data.get("partial_member_list") and data.get("permission") == "partial_members":
+            DatasetPermissionService.update_partial_member_list(
+                tenant_id, dataset_id_str, data.get("partial_member_list")
+            )
+        # clear partial member list when permission is only_me or all_team_members
+        elif (
+            data.get("permission") == DatasetPermissionEnum.ONLY_ME
+            or data.get("permission") == DatasetPermissionEnum.ALL_TEAM
+        ):
+            DatasetPermissionService.clear_partial_member_list(dataset_id_str)
+
+        partial_member_list = DatasetPermissionService.get_dataset_partial_member_list(dataset_id_str)
+        result_data.update({"partial_member_list": partial_member_list})
+
+        return result_data, 200
 
 
 api.add_resource(DatasetListApi, "/datasets")

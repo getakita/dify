@@ -5,11 +5,26 @@ from typing import Any
 import httpx
 from sqlalchemy import select
 
-from core.file import File, FileBelongsTo, FileTransferMethod, FileType, FileUploadConfig
+from core.file import File, FileBelongsTo, FileExtraConfig, FileTransferMethod, FileType, FileUploadConfig
 from core.helper import ssrf_proxy
 from extensions.ext_database import db
 from models import MessageFile, ToolFile, UploadFile
 
+# tuan edit
+from urllib.parse import urlparse, unquote
+def get_filename_from_url(url):
+    # First try to get filename from path
+    path = urlparse(url).path
+    base_filename = path.split('/')[-1]
+
+    # Remove URL encoding if any
+    filename = unquote(base_filename)
+
+    # Remove query parameters if present
+    filename = filename.split('?')[0]
+
+    return filename or "unknown_file"
+#end tuan edit
 
 def build_from_message_files(
     *,
@@ -168,9 +183,14 @@ def _build_from_remote_url(
 def _get_remote_file_info(url: str):
     mime_type = mimetypes.guess_type(url)[0] or ""
     file_size = -1
-    filename = url.split("/")[-1].split("?")[0] or "unknown_file"
+    filename = get_filename_from_url(url)
 
-    resp = ssrf_proxy.head(url, follow_redirects=True)
+    resp = ssrf_proxy.get(
+        url,
+        follow_redirects=True
+    )
+    resp.read()  # Consume and discard the response body
+
     if resp.status_code == httpx.codes.OK:
         if content_disposition := resp.headers.get("Content-Disposition"):
             filename = str(content_disposition.split("filename=")[-1].strip('"'))
