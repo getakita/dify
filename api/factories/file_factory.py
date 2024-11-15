@@ -5,7 +5,7 @@ from typing import Any
 import httpx
 from sqlalchemy import select
 
-from core.file import File, FileBelongsTo, FileExtraConfig, FileTransferMethod, FileType, FileUploadConfig
+from core.file import File, FileBelongsTo, FileTransferMethod, FileType, FileUploadConfig
 from core.helper import ssrf_proxy
 from extensions.ext_database import db
 from models import MessageFile, ToolFile, UploadFile
